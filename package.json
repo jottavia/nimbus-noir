@@ -1,0 +1,21 @@
+{
+  "name": "nimbus-noir",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nimbus Noir weather app for web and iOS",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "ios:sync": "npm run build && cap sync ios",
+    "ios:open": "npm run ios:sync && cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/geolocation": "^8.0.0",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capacitor/share": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
+  }
+}

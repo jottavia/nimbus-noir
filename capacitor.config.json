@@ -1,0 +1,11 @@
+{
+  "appId": "com.jottavia.nimbusnoir",
+  "appName": "Nimbus Noir",
+  "webDir": "www",
+  "backgroundColor": "#11161d",
+  "ios": {
+    "contentInset": "always",
+    "preferredContentMode": "mobile",
+    "scrollEnabled": true
+  }
+}

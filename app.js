@@ -2,6 +2,8 @@
 'use strict';
 
 const $ = (sel) => document.querySelector(sel);
+const nativePlugins = window.Capacitor?.Plugins;
+const isNativeApp = Boolean(window.Capacitor?.isNativePlatform?.());
 
 /* ================= Units (spec Gap 3) ================= */
 const UNIT_KEY = 'nimbus_units';
@@ -52,7 +54,15 @@ function getPinned() {
   catch { return []; }
 }
 function setPinned(list) { try { localStorage.setItem(PIN_KEY, JSON.stringify(list)); } catch { /* ignore */ } }
-function buzz() { try { if (navigator.vibrate) navigator.vibrate(10); } catch { /* ignore */ } }
+function buzz() {
+  try {
+    if (isNativeApp && nativePlugins?.Haptics) {
+      nativePlugins.Haptics.impact({ style: 'LIGHT' }).catch(() => {});
+    } else if (navigator.vibrate) {
+      navigator.vibrate(10);
+    }
+  } catch { /* optional feedback */ }
+}
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -461,32 +471,52 @@ async function refresh(force = false) {
   }
 }
 
-function requestGPS() {
-  if (!('geolocation' in navigator)) { openModal('search-modal'); return; }
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const { latitude, longitude } = pos.coords;
-      state.lat = latitude; state.lon = longitude; state.liveMode = true;
-      $('#display-location').textContent = 'Locating...';
-      refresh(false); // instant paint from cache/network
-      const name = await reverseGeocode(latitude, longitude); // Gap 2
-      state.name = name;
-      $('#display-location').textContent = name;
-      try { localStorage.setItem(LAST_LOC_KEY, JSON.stringify({ lat: latitude, lon: longitude, name })); } catch { /* ignore */ }
-      updatePinUI();
-    },
-    () => {
-      try {
-        const last = JSON.parse(localStorage.getItem(LAST_LOC_KEY) || 'null');
-        if (last) { setLocation(last.lat, last.lon, last.name); return; }
-      } catch { /* ignore */ }
-      const pinned = getPinned();
-      if (pinned.length) { setLocation(pinned[0].lat, pinned[0].lon, pinned[0].name); return; }
-      $('#display-location').textContent = 'Search for a city';
-      openModal('search-modal');
-    },
-    { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 }
-  );
+async function useGPSPosition(pos) {
+  const { latitude, longitude } = pos.coords;
+  state.lat = latitude; state.lon = longitude; state.liveMode = true;
+  $('#display-location').textContent = 'Locating...';
+  refresh(false); // instant paint from cache/network
+  const name = await reverseGeocode(latitude, longitude);
+  state.name = name;
+  $('#display-location').textContent = name;
+  try { localStorage.setItem(LAST_LOC_KEY, JSON.stringify({ lat: latitude, lon: longitude, name })); } catch { /* ignore */ }
+  updatePinUI();
+}
+
+function useGPSFallback() {
+  try {
+    const last = JSON.parse(localStorage.getItem(LAST_LOC_KEY) || 'null');
+    if (last) { setLocation(last.lat, last.lon, last.name); return; }
+  } catch { /* ignore */ }
+  const pinned = getPinned();
+  if (pinned.length) { setLocation(pinned[0].lat, pinned[0].lon, pinned[0].name); return; }
+  $('#display-location').textContent = 'Search for a city';
+  openModal('search-modal');
+}
+
+async function requestGPS() {
+  if (isNativeApp && nativePlugins?.Geolocation) {
+    try {
+      const permission = await nativePlugins.Geolocation.requestPermissions({ permissions: ['location'] });
+      if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') throw new Error('Location denied');
+      const pos = await nativePlugins.Geolocation.getCurrentPosition({
+        enableHighAccuracy: false,
+        timeout: 8000,
+        maximumAge: 600000
+      });
+      await useGPSPosition(pos);
+    } catch {
+      useGPSFallback();
+    }
+    return;
+  }
+
+  if (!('geolocation' in navigator)) { useGPSFallback(); return; }
+  navigator.geolocation.getCurrentPosition(useGPSPosition, useGPSFallback, {
+    enableHighAccuracy: false,
+    timeout: 8000,
+    maximumAge: 600000
+  });
 }
 
 /* ================= Pinned ================= */
@@ -690,7 +720,9 @@ async function shareSnapshot() {
   const temp = $('#hero-temp').textContent;
   const prose = $('#hero-prose').textContent;
   const text = `${state.name}: ${temp}${getUnits() === 'metric' ? '°C' : '°'} — ${prose} (via Nimbus Noir)`;
-  if (navigator.share) {
+  if (isNativeApp && nativePlugins?.Share) {
+    try { await nativePlugins.Share.share({ title: 'Nimbus Noir', text, dialogTitle: 'Share weather snapshot' }); } catch { /* dismissed */ }
+  } else if (navigator.share) {
     try { await navigator.share({ title: 'Nimbus Noir', text, url: location.href }); } catch { /* dismissed */ }
   } else if (navigator.clipboard) {
     try {
@@ -789,7 +821,7 @@ function wire() {
 }
 
 function registerSW() {
-  if ('serviceWorker' in navigator) {
+  if (!isNativeApp && 'serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').catch(() => { /* optional */ });
     });
