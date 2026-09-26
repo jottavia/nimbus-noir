@@ -582,7 +582,10 @@ async function runTimeMachine() {
 }
 
 /* ================= Radar (RainViewer, Gap 4, on-demand) ================= */
-const radar = { frames: [], i: 0, timer: null };
+// NOTE: RainViewer radar tiles max out at zoom 7 — z=8+ returns a
+// "zoom level not supported" placeholder tile. OSM base uses the same z.
+const radar = { frames: [], i: 0, timer: null, z: 7, playing: false };
+const RADAR_MIN_Z = 4, RADAR_MAX_Z = 7;
 function lon2x(lon, z) { return Math.floor(((lon + 180) / 360) * 2 ** z); }
 function lat2y(lat, z) {
   const r = (lat * Math.PI) / 180;
@@ -610,7 +613,7 @@ async function openRadar() {
   startRadar();
 }
 function buildRadarTiles() {
-  const z = 8, cx = lon2x(state.lon, z), cy = lat2y(state.lat, z);
+  const z = radar.z, cx = lon2x(state.lon, z), cy = lat2y(state.lat, z);
   const map = $('#radar-map');
   map.innerHTML = '';
   for (let dx = -1; dx <= 1; dx++) {
@@ -646,7 +649,7 @@ function paintRadarFrame() {
   const f = radar.frames[radar.i];
   if (!f) return;
   document.querySelectorAll('#radar-map img.radar-ov').forEach((img) => {
-    img.src = `https://tilecache.rainviewer.com${f.path}/256/8/${img.dataset.x}/${img.dataset.y}/2/1_1.png`;
+    img.src = `https://tilecache.rainviewer.com${f.path}/256/${radar.z}/${img.dataset.x}/${img.dataset.y}/2/1_1.png`;
   });
   $('#radar-time').textContent = new Date(f.time * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
@@ -661,8 +664,7 @@ function startRadar() {
   }, 900);
   radar.playing = true;
 }
-function stopRadar(keepOpen = false) {
-  if (radar.timer) clearInterval(radar.timer);
+function stopRadar(keepOpen = false) {  if (radar.timer) clearInterval(radar.timer);
   radar.timer = null;
   radar.playing = false;
   if (!keepOpen) {
@@ -671,6 +673,17 @@ function stopRadar(keepOpen = false) {
   }
 }
 
+function zoomRadar(d) {
+  buzz();
+  if (!radar.frames.length) return;
+  const nz = Math.min(RADAR_MAX_Z, Math.max(RADAR_MIN_Z, radar.z + d));
+  if (nz === radar.z) return;
+  radar.z = nz;
+  buildRadarTiles();
+  paintRadarFrame();
+  const zl = $('#radar-zoom-label');
+  if (zl) zl.textContent = `z${radar.z}`;
+}
 /* ================= Share (spec 2.4) ================= */
 async function shareSnapshot() {
   buzz();
@@ -726,6 +739,8 @@ function wire() {
     if (radar.playing) { stopRadar(); $('#radar-play').textContent = 'Play'; }
     else startRadar();
   });
+  $('#radar-zoom-in').addEventListener('click', () => zoomRadar(1));
+  $('#radar-zoom-out').addEventListener('click', () => zoomRadar(-1));
 
   $('#btn-share').addEventListener('click', shareSnapshot);
 
