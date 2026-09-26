@@ -60,25 +60,36 @@
       <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
       <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
       <symbol id="i-locate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5"/></symbol>
+      <symbol id="i-radar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"/><path d="M12 6a6 6 0 1 0 6 6 6 6 0 0 0-6-6z"/><path d="M12 10a2 2 0 1 0 2 2 2 2 0 0 0-2-2z"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51 15.42 17.49M15.41 6.51 8.59 10.49"/></symbol>
     </defs>
   </svg>
 
-  <header class="topbar">
+  <!-- Top Bar -->
+  <header class="topbar nav-bar">
     <button id="drawer-btn" class="icon-btn" aria-label="Pinned locations">
       <svg class="icon"><use href="#i-menu"/></svg>
     </button>
-    <div class="title-wrap">
-      <h1 id="location-title">Locating…</h1>
+    <div class="nav-title-group" id="btn-open-search" title="Search or switch city" role="button" tabindex="0" aria-label="Search or switch city">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--cyan); flex-shrink: 0;">
+        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+        <circle cx="12" cy="10" r="3"></circle>
+      </svg>
+      <span class="location-name" id="display-location">Locating...</span>
       <button id="pin-toggle" class="pin-btn" aria-label="Bookmark this location" aria-pressed="false">
         <svg class="icon"><use href="#i-pin"/></svg>
       </button>
     </div>
-    <div class="top-actions">
-      <button id="search-btn" class="icon-btn" aria-label="Search cities">
-        <svg class="icon"><use href="#i-search"/></svg>
+    <div class="nav-actions">
+      <button class="pill-btn mono" id="btn-unit-toggle" title="Toggle Units">°F</button>
+      <button class="icon-btn" id="btn-radar" title="RainViewer Radar" aria-label="Radar">
+        <svg class="icon"><use href="#i-radar"/></svg>
       </button>
-      <button id="timemachine-btn" class="icon-btn" aria-label="Time Machine">
+      <button class="icon-btn" id="timemachine-btn" title="Time Machine" aria-label="Time Machine">
         <svg class="icon"><use href="#i-clock"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-share" title="Share Snapshot" aria-label="Share">
+        <svg class="icon"><use href="#i-share"/></svg>
       </button>
     </div>
   </header>
@@ -87,46 +98,97 @@
   <div id="cache-badge" class="cache-badge" hidden></div>
 
   <main id="app">
-    <section class="hero card" aria-live="polite">
+    <!-- Severe Weather Banner (Expandable) -->
+    <div class="alert-banner" id="severe-alert" hidden>
+      <button class="alert-header" id="alert-toggle" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 2L1 21h22L12 2zm0 4.2L19.5 19h-15L12 6.2zM11 10v4h2v-4h-2zm0 6v2h2v-2h-2z"/>
+        </svg>
+        <span id="alert-title">Weather Advisory Active</span>
+        <span class="alert-count" id="alert-count"></span>
+      </button>
+      <div class="alert-desc" id="alert-body" hidden>Check official National Weather Service guidelines for your area.</div>
+    </div>
+
+    <!-- Hero Temperature & Natural-Language Summary -->
+    <section class="hero-container hero card" aria-live="polite">
       <div class="hero-temp-row">
         <svg id="hero-icon" class="hero-icon" aria-hidden="true"><use id="hero-icon-use" href="#i-cloud"/></svg>
         <div>
-          <div id="hero-temp" class="hero-temp">--°</div>
-          <div id="hero-hilo" class="hero-hilo">H: --°&nbsp;&nbsp;L: --°</div>
+          <div class="hero-temp-inline">
+            <span class="hero-temp" id="hero-temp">--</span><span class="hero-temp-deg" id="hero-unit-label">°</span>
+          </div>
+          <div class="hero-bounds hero-hilo"><span id="hero-high">H: --°</span> <span id="hero-low">L: --°</span></div>
         </div>
       </div>
-      <p id="hero-summary" class="hero-summary">Waiting for location…</p>
+      <p class="hero-prose hero-summary" id="hero-prose">Fetching atmospheric conditions...</p>
       <div class="hero-meta">
-        <span id="updated-label">Updated —</span>
+        <span class="hero-updated" id="hero-updated">Synchronizing...</span>
         <span id="feels-like" class="dim"></span>
       </div>
     </section>
 
-    <section class="card" aria-label="Precipitation next 24 hours">
-      <h2 class="card-title">Precipitation <span id="precip-window" class="dim">· next 24h</span></h2>
+    <!-- Signature Dark Sky Sub-Hourly Precipitation Bar -->
+    <section class="precip-card card" aria-label="Precipitation next hour">
+      <div class="card-title">
+        <span>Next-Hour Precipitation</span>
+        <span class="mono" id="precip-summary-flag">—</span>
+      </div>
+      <div class="canvas-container">
+        <canvas id="precip-timeline" height="64"></canvas>
+      </div>
+      <div class="precip-labels">
+        <span>Now</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span>
+      </div>
+      <h2 class="card-title" style="margin-top:12px">24-Hour Outlook <span id="precip-window" class="dim"></span></h2>
       <div id="precip-bar" class="precip-bar" role="img" aria-label="24 hour precipitation probability bar"></div>
       <div id="precip-label" class="precip-label dim">—</div>
     </section>
 
+    <!-- Environmental Metagrid (Barometer Trend + Moon Phase) -->
+    <section class="meta-grid">
+      <div class="meta-card card">
+        <span class="card-title">Barometer</span>
+        <div class="meta-value-row">
+          <span class="meta-value" id="val-pressure">--</span>
+          <span class="meta-trend" id="val-pressure-trend">--</span>
+        </div>
+        <span class="meta-subtext" id="val-pressure-prose">Calculating 3h delta</span>
+      </div>
+      <div class="meta-card card">
+        <span class="card-title">Sun &amp; Moon</span>
+        <div class="meta-value-row">
+          <span class="meta-value" id="val-moon-icon">🌑</span>
+          <span class="meta-trend" id="val-moon-name">—</span>
+        </div>
+        <span class="meta-subtext" id="val-solar-countdown">Sunset in --</span>
+      </div>
+    </section>
+
     <section class="card" aria-label="Hourly forecast">
       <h2 class="card-title">Hourly</h2>
-      <div id="hourly" class="hourly" tabindex="0"></div>
+      <div id="hourly-carousel" class="hourly hourly-carousel" tabindex="0"></div>
     </section>
 
-    <section class="card" aria-label="10 day forecast">
+    <section class="daily-card card" aria-label="10 day forecast">
       <h2 class="card-title">10-Day Forecast</h2>
-      <ul id="daily" class="daily"></ul>
+      <ul id="daily-list" class="daily"></ul>
     </section>
 
-    <aside id="community-slot" class="card community" aria-label="Community showcase">
-      <h2 class="card-title">From the developer</h2>
-      <p class="dim">An unobtrusive slot for portfolio links, open-source notes, or personal remarks. No ads, no trackers.</p>
-      <p><a href="https://open-meteo.com/" rel="noopener">Learn about the Open-Meteo API →</a></p>
+    <!-- Modular Promo / Developer Showcase Slot -->
+    <aside class="promo-slot card community" id="community-slot" aria-label="Community showcase">
+      <span class="promo-header card-title">Project Architecture</span>
+      <p class="promo-body dim">
+        Nimbus Noir executes 100% client-side with zero intermediary backend servers.
+        High-resolution forecasting powered by NOAA HRRR (3 km) and ECMWF IFS (9 km).
+      </p>
     </aside>
   </main>
 
-  <footer class="attribution">
-    <p>Weather data powered by <a href="https://open-meteo.com/" rel="noopener">Open-Meteo</a> (CC BY 4.0)</p>
+  <!-- Footer Attribution -->
+  <footer class="app-footer attribution">
+    <div>Data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0)</div>
+    <div>Radar via <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer API</a> • Client-Side PWA</div>
     <p class="dim small">Models: best_match (HRRR 0–48h → ECMWF IFS 48–240h) · 100% on-device</p>
   </footer>
 
@@ -169,6 +231,21 @@
         <button id="time-back" class="btn">Back to live</button>
       </div>
       <div id="time-result" class="time-result dim"></div>
+    </div>
+  </div>
+
+  <!-- Radar modal (RainViewer, on-demand) -->
+  <div id="radar-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="radar-title">
+    <div class="modal-card radar-card">
+      <div class="modal-head">
+        <h2 id="radar-title">Live Radar</h2>
+        <button class="icon-btn modal-close" data-close="radar-modal" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <p class="dim small" style="margin:6px 0 0">RainViewer composite · <span id="radar-time">—</span></p>
+      <div id="radar-map" class="radar-map" role="img" aria-label="Animated precipitation radar"></div>
+      <div class="row">
+        <button id="radar-play" class="btn primary">Pause</button>
+      </div>
     </div>
   </div>
 

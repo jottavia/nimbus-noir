@@ -1,5 +1,5 @@
 /* Nimbus Noir — Service Worker (offline app-shell cache, zero-backend) */
-const CACHE_NAME = 'nimbus-noir-v1';
+const CACHE_NAME = 'nimbus-noir-v2';
 const SHELL_ASSETS = [
   './',
   './index.html',

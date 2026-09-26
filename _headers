@@ -2,4 +2,4 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com https://archive-api.open-meteo.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com https://archive-api.open-meteo.com https://api.bigdatacloud.net https://api.rainviewer.com https://tilecache.rainviewer.com https://api.weather.gov; img-src 'self' data: https://tilecache.rainviewer.com https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline'; script-src 'self';

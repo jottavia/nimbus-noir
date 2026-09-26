@@ -294,3 +294,129 @@ a { color: var(--cyan); }
   .modal { align-items: center; padding: 20px; }
   .modal-card { border-radius: 16px; }
 }
+
+/* ---- Nimbus Noir spec additions: nav, alerts, canvas, metagrid, radar ---- */
+.nav-title-group {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 4px 6px;
+}
+.nav-title-group:active { background: var(--border); }
+.location-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-actions { display: flex; align-items: center; gap: 4px; }
+.pill-btn {
+  background: var(--border);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  min-width: 46px;
+}
+.pill-btn:active { background: var(--cyan); border-color: var(--cyan); color: #06202e; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+/* Severe weather banner */
+.alert-banner {
+  background: #3a1113;
+  border: 1px solid #7f1d1d;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.alert-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  color: #fecaca;
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.alert-count {
+  margin-left: auto;
+  background: #7f1d1d;
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 0.75rem;
+}
+.alert-desc {
+  padding: 0 14px 12px;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: #fca5a5;
+  white-space: pre-wrap;
+}
+
+/* Sub-hourly canvas */
+.canvas-container { width: 100%; }
+#precip-timeline { width: 100%; height: 64px; display: block; }
+.precip-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* Meta grid */
+.meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.meta-grid .card { margin: 0; }
+.meta-value-row { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 4px; }
+.meta-value { font-size: 1.5rem; font-weight: 200; }
+.meta-trend { font-size: 1.1rem; color: var(--cyan); }
+.meta-subtext { font-size: 0.76rem; color: var(--muted); line-height: 1.4; }
+
+/* Radar */
+.radar-card { max-width: 640px; }
+.radar-map {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: 60dvh;
+  margin-top: 10px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0b0f14;
+  border: 1px solid var(--border);
+}
+.radar-map img.tile {
+  position: absolute;
+  width: 33.3334%;
+  height: 33.3334%;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.radar-pin {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 12px; height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  border: 2px solid #fff;
+  box-shadow: 0 0 8px rgba(56,189,248,0.9);
+  z-index: 5;
+}
+.hero-temp-inline { display: flex; align-items: flex-start; }
+.hero-temp-deg { font-size: 2rem; font-weight: 200; color: var(--muted); line-height: 1.2; }
