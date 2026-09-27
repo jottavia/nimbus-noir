@@ -1,6 +1,8 @@
 :root {
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   --bg: #11161d;
   --card: #161c24;
   --border: #202936;
@@ -415,6 +417,7 @@ a { color: var(--cyan); }
 
 /* Radar */
 .radar-card { max-width: 640px; }
+.radar-zoom-note { margin: 8px 0 0; }
 .radar-map {
   position: relative;
   width: 100%;
@@ -443,6 +446,45 @@ a { color: var(--cyan); }
   border: 2px solid #fff;
   box-shadow: 0 0 8px rgba(56,189,248,0.9);
   z-index: 5;
+}
+
+/* Keep radar tiles square and move controls beside the map on short,
+   landscape phone screens. */
+@media (orientation: landscape) and (max-height: 600px) {
+  #radar-modal {
+    align-items: center;
+    padding-top: max(8px, var(--safe-top));
+    padding-right: max(8px, var(--safe-right));
+    padding-bottom: max(8px, var(--safe-bottom));
+    padding-left: max(8px, var(--safe-left));
+  }
+  .radar-card {
+    width: min(100%, 900px);
+    max-width: 900px;
+    max-height: calc(100dvh - max(16px, var(--safe-top)) - max(16px, var(--safe-bottom)));
+    padding: 10px 12px;
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .radar-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(140px, 190px);
+    align-items: center;
+    gap: 12px;
+  }
+  .radar-map {
+    width: min(100%, calc(100dvh - 130px));
+    height: auto;
+    max-height: none;
+    margin: 8px auto 0;
+    justify-self: center;
+  }
+  .radar-controls .row {
+    flex-direction: column;
+    margin-top: 0;
+  }
+  .radar-controls .btn { width: 100%; }
+  .radar-zoom-note { text-align: center; }
 }
 .hero-temp-inline { display: flex; align-items: flex-start; }
 .hero-temp-deg { font-size: 2rem; font-weight: 200; color: var(--muted); line-height: 1.2; }
