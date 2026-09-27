@@ -198,7 +198,6 @@ a { color: var(--cyan); }
   margin-bottom: 3px;
 }
 .now-metric strong { display: block; font-size: 0.86rem; font-weight: 500; overflow-wrap: anywhere; }
-.now-note { color: var(--muted); font-size: 0.7rem; line-height: 1.4; margin: 10px 0 0; }
 
 /* Precip bar */
 .precip-bar {
