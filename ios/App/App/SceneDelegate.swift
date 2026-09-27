@@ -1,6 +1,17 @@
 import UIKit
 import Capacitor
 
+final class NimbusBridgeViewController: CAPBridgeViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        // Keep the app anchored to the viewport instead of exposing an empty
+        // area when the outer WKWebView is pulled past the top or bottom.
+        bridge?.webView?.scrollView.bounces = false
+        bridge?.webView?.scrollView.alwaysBounceVertical = false
+    }
+}
+
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
@@ -8,7 +19,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = CAPBridgeViewController()
+        window?.rootViewController = NimbusBridgeViewController()
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
