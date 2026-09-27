@@ -643,7 +643,10 @@ async function runTimeMachine() {
 /* ================= Radar (RainViewer, Gap 4, on-demand) ================= */
 // NOTE: RainViewer radar tiles max out at zoom 7 — z=8+ returns a
 // "zoom level not supported" placeholder tile. OSM base uses the same z.
-const radar = { frames: [], i: 0, timer: null, z: 7, playing: false };
+const radar = {
+  frames: [], i: 0, timer: null, z: 7, playing: false,
+  cx: null, cy: null, offsetX: 0, offsetY: 0, drag: null
+};
 const RADAR_MIN_Z = 4, RADAR_MAX_Z = 7;
 function lon2x(lon, z) { return Math.floor(((lon + 180) / 360) * 2 ** z); }
 function lat2y(lat, z) {
@@ -667,17 +670,33 @@ async function openRadar() {
       return;
     }
     if (!radar.frames.length) { $('#radar-time').textContent = 'No radar frames.'; return; }
-    buildRadarTiles();
   }
+  buildRadarTiles({ resetCenter: true });
   startRadar();
 }
-function buildRadarTiles() {
-  const z = radar.z, cx = lon2x(state.lon, z), cy = lat2y(state.lat, z);
+function positionRadarLayer() {
+  const layer = $('#radar-map .radar-tile-layer');
+  if (layer) layer.style.transform = `translate3d(${radar.offsetX}px, ${radar.offsetY}px, 0)`;
+}
+function buildRadarTiles({ resetCenter = false } = {}) {
+  const z = radar.z;
+  if (resetCenter || radar.cx == null || radar.cy == null) {
+    radar.cx = lon2x(state.lon, z);
+    radar.cy = lat2y(state.lat, z);
+    radar.offsetX = 0;
+    radar.offsetY = 0;
+  }
   const map = $('#radar-map');
   map.innerHTML = '';
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) {
-      const x = cx + dx, y = cy + dy;
+  const layer = document.createElement('div');
+  layer.className = 'radar-tile-layer';
+  map.appendChild(layer);
+  const worldSize = 2 ** z;
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      const x = ((radar.cx + dx) % worldSize + worldSize) % worldSize;
+      const y = radar.cy + dy;
+      if (y < 0 || y >= worldSize) continue;
       const base = document.createElement('img');
       base.className = 'tile';
       base.alt = '';
@@ -686,16 +705,17 @@ function buildRadarTiles() {
       base.style.left = `${(dx + 1) * 33.3334}%`;
       base.style.top = `${(dy + 1) * 33.3334}%`;
       base.style.filter = 'grayscale(1) brightness(0.55) contrast(1.1)';
-      map.appendChild(base);
+      layer.appendChild(base);
       const ov = document.createElement('img');
       ov.className = 'tile radar-ov';
       ov.alt = '';
       ov.dataset.x = x; ov.dataset.y = y;
       ov.style.left = base.style.left;
       ov.style.top = base.style.top;
-      map.appendChild(ov);
+      layer.appendChild(ov);
     }
   }
+  positionRadarLayer();
   const pin = document.createElement('div');
   pin.className = 'radar-pin';
   map.appendChild(pin);
@@ -703,6 +723,49 @@ function buildRadarTiles() {
   attr.setAttribute('style', 'position:absolute;right:6px;bottom:4px;font-size:10px;color:#8b98a5;background:rgba(17,22,29,.7);padding:1px 6px;border-radius:6px;z-index:6;');
   attr.innerHTML = '© <a href="https://www.openstreetmap.org/copyright" rel="noopener" style="color:#8b98a5">OSM</a> · <a href="https://www.rainviewer.com/" rel="noopener" style="color:#8b98a5">RainViewer</a>';
   map.appendChild(attr);
+}
+function normalizeRadarPan() {
+  const map = $('#radar-map');
+  const tileSize = map.clientWidth / 3;
+  if (!tileSize) return;
+  while (radar.offsetX >= tileSize) { radar.cx -= 1; radar.offsetX -= tileSize; }
+  while (radar.offsetX <= -tileSize) { radar.cx += 1; radar.offsetX += tileSize; }
+  while (radar.offsetY >= tileSize) { radar.cy -= 1; radar.offsetY -= tileSize; }
+  while (radar.offsetY <= -tileSize) { radar.cy += 1; radar.offsetY += tileSize; }
+  const worldSize = 2 ** radar.z;
+  radar.cx = ((radar.cx % worldSize) + worldSize) % worldSize;
+  radar.cy = Math.max(2, Math.min(worldSize - 3, radar.cy));
+  buildRadarTiles();
+  paintRadarFrame();
+}
+function wireRadarPan() {
+  const map = $('#radar-map');
+  map.addEventListener('pointerdown', (e) => {
+    if (!radar.frames.length) return;
+    map.setPointerCapture(e.pointerId);
+    radar.drag = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: radar.offsetX,
+      offsetY: radar.offsetY
+    };
+    map.classList.add('dragging');
+  });
+  map.addEventListener('pointermove', (e) => {
+    if (!radar.drag || radar.drag.pointerId !== e.pointerId) return;
+    radar.offsetX = radar.drag.offsetX + e.clientX - radar.drag.startX;
+    radar.offsetY = radar.drag.offsetY + e.clientY - radar.drag.startY;
+    positionRadarLayer();
+  });
+  const finishDrag = (e) => {
+    if (!radar.drag || radar.drag.pointerId !== e.pointerId) return;
+    radar.drag = null;
+    map.classList.remove('dragging');
+    normalizeRadarPan();
+  };
+  map.addEventListener('pointerup', finishDrag);
+  map.addEventListener('pointercancel', finishDrag);
 }
 function paintRadarFrame() {
   const f = radar.frames[radar.i];
@@ -738,7 +801,7 @@ function zoomRadar(d) {
   const nz = Math.min(RADAR_MAX_Z, Math.max(RADAR_MIN_Z, radar.z + d));
   if (nz === radar.z) return;
   radar.z = nz;
-  buildRadarTiles();
+  buildRadarTiles({ resetCenter: true });
   paintRadarFrame();
   const zl = $('#radar-zoom-label');
   if (zl) zl.textContent = `z${radar.z}`;
@@ -803,6 +866,7 @@ function wire() {
   });
   $('#radar-zoom-in').addEventListener('click', () => zoomRadar(1));
   $('#radar-zoom-out').addEventListener('click', () => zoomRadar(-1));
+  wireRadarPan();
 
   $('#btn-share').addEventListener('click', shareSnapshot);
 
