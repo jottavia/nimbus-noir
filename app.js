@@ -40,9 +40,12 @@ function fmtCurrentPrecip(v) {
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const FOREGROUND_REVALIDATE_MS = 20 * 60 * 1000;
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
+const RADAR_OBSERVATION_TTL_MS = 4 * 60 * 1000;
 const PIN_KEY = 'nimbus_pinned_locations';
 const LAST_LOC_KEY = 'nimbus_last_location';
 let lastAutoRefreshAttempt = 0;
+let rightNowCheckId = 0;
+const radarObservationCache = new Map();
 
 const state = {
   lat: null, lon: null, name: 'Locating...', payload: null, fetchedAt: 0,
@@ -210,6 +213,117 @@ function currentPrecipitationStatus(code, amount) {
   return { text: 'No precipitation indicated', wet: false };
 }
 
+function radarTilePosition(lat, lon, z) {
+  const worldTiles = 2 ** z;
+  const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, Number(lat)));
+  const xFloat = ((Number(lon) + 180) / 360) * worldTiles;
+  const latRad = (clampedLat * Math.PI) / 180;
+  const yFloat = ((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2) * worldTiles;
+  const x = Math.floor(xFloat);
+  const y = Math.floor(yFloat);
+  return {
+    x: ((x % worldTiles) + worldTiles) % worldTiles,
+    y: Math.max(0, Math.min(worldTiles - 1, y)),
+    pixelX: Math.max(0, Math.min(255, Math.floor((xFloat - x) * 256))),
+    pixelY: Math.max(0, Math.min(255, Math.floor((yFloat - y) * 256))),
+  };
+}
+
+async function decodeRadarTile(blob) {
+  if ('createImageBitmap' in window) return createImageBitmap(blob);
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not decode radar tile')); };
+    img.src = url;
+  });
+}
+
+function countRadarPixels(image, pixelX, pixelY, radius) {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Radar sampling is unavailable');
+  context.drawImage(image, 0, 0);
+  const left = Math.max(0, pixelX - radius);
+  const top = Math.max(0, pixelY - radius);
+  const width = Math.min(image.width - left, radius * 2 + 1);
+  const height = Math.min(image.height - top, radius * 2 + 1);
+  const pixels = context.getImageData(left, top, width, height).data;
+  let wetPixels = 0;
+  for (let i = 3; i < pixels.length; i += 4) {
+    // RainViewer's radar overlay is transparent where no echo is present.
+    // Requiring visible opacity ignores faint antialiasing at echo edges.
+    if (pixels[i] >= 40) wetPixels += 1;
+  }
+  return wetPixels;
+}
+
+async function fetchLocalRadarObservation(lat, lon) {
+  const cacheKey = `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
+  const cached = radarObservationCache.get(cacheKey);
+  if (cached && Date.now() - cached.checkedAt < RADAR_OBSERVATION_TTL_MS) return cached.result;
+
+  const metadataResponse = await fetch('https://api.rainviewer.com/public/weather-maps.json', { cache: 'no-store' });
+  if (!metadataResponse.ok) throw new Error('Radar metadata is unavailable');
+  const metadata = await metadataResponse.json();
+  const frames = metadata.radar?.past || [];
+  const frame = frames[frames.length - 1];
+  if (!frame?.path || !frame?.time) throw new Error('No radar frame is available');
+
+  const observedAt = frame.time * 1000;
+  if (Date.now() - observedAt > 30 * 60 * 1000) throw new Error('Radar frame is too old');
+
+  const z = 7;
+  const position = radarTilePosition(lat, lon, z);
+  // Disable smoothing for sampling so colored halos do not create false rain.
+  const tileUrl = `https://tilecache.rainviewer.com${frame.path}/256/${z}/${position.x}/${position.y}/2/0_1.png`;
+  const tileResponse = await fetch(tileUrl, { cache: 'no-store' });
+  if (!tileResponse.ok) throw new Error('Radar tile is unavailable');
+  const image = await decodeRadarTile(await tileResponse.blob());
+  try {
+    const localPixels = countRadarPixels(image, position.pixelX, position.pixelY, 1);
+    const nearbyPixels = countRadarPixels(image, position.pixelX, position.pixelY, 5);
+    const result = {
+      local: localPixels >= 2,
+      nearby: nearbyPixels >= 2,
+      observedAt,
+    };
+    radarObservationCache.set(cacheKey, { checkedAt: Date.now(), result });
+    return result;
+  } finally {
+    if (typeof image.close === 'function') image.close();
+  }
+}
+
+async function updateRightNowWithRadar(current, checkId, lat, lon) {
+  try {
+    const observation = await fetchLocalRadarObservation(lat, lon);
+    if (checkId !== rightNowCheckId || state.lat !== lat || state.lon !== lon || !state.liveMode) return;
+
+    const model = currentPrecipitationStatus(current.weather_code, current.precipitation);
+    const condition = $('#now-condition');
+    if (observation.local && model.wet) {
+      condition.textContent = 'Precipitation likely at your location';
+    } else if (observation.local) {
+      condition.textContent = 'Radar detects precipitation at your location';
+    } else if (observation.nearby) {
+      condition.textContent = 'Radar detects precipitation nearby';
+    } else if (model.wet) {
+      condition.textContent = 'Model suggests precipitation, but local radar is clear';
+    } else {
+      condition.textContent = 'No precipitation detected nearby';
+    }
+    condition.classList.toggle('is-wet', observation.local || observation.nearby);
+    $('#now-source').textContent = `Radar ${timeAgo(observation.observedAt).replace('Updated ', '').toLowerCase()}`;
+  } catch {
+    if (checkId !== rightNowCheckId || state.lat !== lat || state.lon !== lon || !state.liveMode) return;
+    $('#now-source').textContent = 'Latest 15-minute estimate';
+  }
+}
+
 /* ================= Moon + solar (spec 2.3, pure client-side) ================= */
 const SYNODIC = 29.53058867;
 const NEW_MOON_REF = Date.UTC(2000, 0, 6, 18, 14) / 864e5;
@@ -296,6 +410,9 @@ function render(payload, fetchedAt, opts = {}) {
   const nowCondition = $('#now-condition');
   nowCondition.textContent = precipStatus.text;
   nowCondition.classList.toggle('is-wet', precipStatus.wet);
+  $('#now-source').textContent = 'Checking local radar…';
+  const checkId = ++rightNowCheckId;
+  updateRightNowWithRadar(current, checkId, state.lat, state.lon);
   $('#now-precipitation').textContent = currentPrecip == null ? 'Unavailable' : fmtCurrentPrecip(currentPrecip);
   const currentHumidity = current.relative_humidity_2m ?? hourly.relative_humidity_2m?.[nowIdx];
   $('#now-humidity').textContent = currentHumidity == null ? 'Unavailable' : `${Math.round(currentHumidity)}%`;
