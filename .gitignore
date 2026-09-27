@@ -6,3 +6,20 @@ ios/App/Pods/
 ios/App/App.xcworkspace/xcuserdata/
 ios/App/App.xcodeproj/xcuserdata/
 *.xcuserstate
+
+# Apple signing and App Store Connect credentials
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.pem
+*.key
+*.xcarchive
+
+# Local environment and credential files
+.env
+.env.*
+!.env.example
+credentials.json
+secrets.json
