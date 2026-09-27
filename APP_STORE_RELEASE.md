@@ -26,6 +26,15 @@ A Mac with a current Xcode release is required to compile, sign, archive, and up
 
 After every web-code change, run `npm run ios:sync` before rebuilding in Xcode.
 
+## Build without owning a Mac
+
+The root `codemagic.yaml` contains two cloud workflows:
+
+- `ios-unsigned-check` compiles the app for an iPhone simulator without Apple credentials. Run this first to validate the Xcode project.
+- `ios-testflight` applies App Store signing, creates an IPA, and uploads it to App Store Connect. It intentionally does not submit the app for App Review.
+
+The signed workflow expects a Codemagic App Store Connect integration named exactly `Nimbus Noir Codemagic` and signing identities matching `com.jottavia.nimbusnoir`.
+
 ## App Store Connect checklist
 
 - Active Apple Developer Program membership and current agreements accepted.
