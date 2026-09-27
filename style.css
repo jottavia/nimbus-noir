@@ -149,7 +149,8 @@ a { color: var(--cyan); }
 }
 .history-banner strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-exit { flex: 0 0 auto; padding: 9px 12px; }
-.history-mode #community-slot { display: none; }
+.history-mode #community-slot,
+.history-mode #now-card { display: none; }
 .card {
   background: #161c24;
   border: 1px solid #202936;
@@ -167,6 +168,37 @@ a { color: var(--cyan); }
 .hero-hilo { color: var(--muted); margin-top: 4px; font-size: 0.95rem; }
 .hero-summary { font-size: 1rem; line-height: 1.45; margin: 10px 0 8px; }
 .hero-meta { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
+
+/* Current conditions: model estimate, not forecast probability */
+.now-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.now-heading .card-title { margin-bottom: 8px; }
+.now-interval { color: var(--muted); font-size: 0.7rem; text-align: right; }
+.now-condition { display: block; color: var(--text); font-size: 1.15rem; margin-bottom: 12px; }
+.now-condition.is-wet { color: #7dd3fc; }
+.now-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.now-metric {
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: #11161d;
+}
+.now-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  margin-bottom: 3px;
+}
+.now-metric strong { display: block; font-size: 0.86rem; font-weight: 500; overflow-wrap: anywhere; }
+.now-note { color: var(--muted); font-size: 0.7rem; line-height: 1.4; margin: 10px 0 0; }
 
 /* Precip bar */
 .precip-bar {

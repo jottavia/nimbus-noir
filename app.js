@@ -29,6 +29,12 @@ function fmtPrecip(v) {
   if (v == null) return '—';
   return getUnits() === 'metric' ? `${Number(v).toFixed(1)} mm` : `${Number(v).toFixed(2)} in`;
 }
+function fmtCurrentPrecip(v) {
+  const amount = Number(v);
+  if (!Number.isFinite(amount) || amount <= 0) return 'None detected';
+  if (getUnits() === 'metric') return amount < 0.1 ? '<0.1 mm' : `${amount.toFixed(1)} mm`;
+  return amount < 0.01 ? '<0.01 in' : `${amount.toFixed(2)} in`;
+}
 
 /* ================= Cache (units are part of the key) ================= */
 const CACHE_TTL_MS = 15 * 60 * 1000;
@@ -91,8 +97,10 @@ function wmoInfo(code, isDay = true) {
 function forecastURL(lat, lon) {
   const p = new URLSearchParams({
     latitude: String(lat), longitude: String(lon),
-    models: 'best_match', // HRRR 3km (0–48h) → ECMWF IFS 9km (48–240h)
-    current: 'temperature_2m,apparent_temperature,weather_code',
+    // Open-Meteo selects and seamlessly combines the best available regional
+    // and global models for the requested location and forecast horizon.
+    models: 'best_match',
+    current: 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,rain,showers,snowfall,weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m,is_day',
     hourly: 'temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,uv_index,surface_pressure',
     minutely_15: 'precipitation,precipitation_probability,weather_code', // Gap 1: sub-hourly
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,sunrise,sunset,uv_index_max,wind_gusts_10m_max',
@@ -189,6 +197,17 @@ function synthesizeSummary(hourly, startIdx) {
   return sentence;
 }
 
+function currentPrecipitationStatus(code, amount) {
+  const c = Number(code);
+  const hasAmount = Number(amount) > 0;
+  if (c === 95 || c === 96 || c === 99) return { text: 'Thunderstorms occurring', wet: true };
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return { text: 'Snow occurring', wet: true };
+  if (c >= 51 && c <= 55) return { text: 'Drizzle occurring', wet: true };
+  if ((c >= 61 && c <= 65) || (c >= 80 && c <= 82)) return { text: 'Rain occurring', wet: true };
+  if (hasAmount) return { text: 'Precipitation occurring', wet: true };
+  return { text: 'No precipitation detected', wet: false };
+}
+
 /* ================= Moon + solar (spec 2.3, pure client-side) ================= */
 const SYNODIC = 29.53058867;
 const NEW_MOON_REF = Date.UTC(2000, 0, 6, 18, 14) / 864e5;
@@ -233,7 +252,7 @@ function setIcon(useEl, iconId) { useEl.setAttribute('href', `#${iconId}`); }
 function setLiveInterface() {
   document.body.classList.remove('history-mode');
   $('#history-banner').hidden = true;
-  $('#precip-card-title').textContent = 'Next-Hour Precipitation';
+  $('#precip-card-title').textContent = 'Next 2 Hours';
   $('#precip-outlook-title').childNodes[0].nodeValue = '24-Hour Outlook ';
   $('#precip-window').textContent = '';
   $('#hourly-card-title').textContent = 'Hourly';
@@ -253,10 +272,11 @@ function render(payload, fetchedAt, opts = {}) {
   const { hourly, daily } = payload;
   const nowIdx = hourIndex(hourly.time);
 
-  const curTemp = payload.current ? Math.round(payload.current.temperature_2m) : Math.round(hourly.temperature_2m[nowIdx]);
-  const curCode = payload.current ? payload.current.weather_code : hourly.weather_code[nowIdx];
-  const feels = payload.current ? payload.current.apparent_temperature : hourly.apparent_temperature?.[nowIdx];
-  const info = wmoInfo(curCode, true);
+  const current = payload.current || {};
+  const curTemp = current.temperature_2m != null ? Math.round(current.temperature_2m) : Math.round(hourly.temperature_2m[nowIdx]);
+  const curCode = current.weather_code ?? hourly.weather_code[nowIdx];
+  const feels = current.apparent_temperature ?? hourly.apparent_temperature?.[nowIdx];
+  const info = wmoInfo(curCode, current.is_day == null ? true : Boolean(current.is_day));
 
   $('#hero-temp').textContent = `${curTemp}`;
   $('#hero-unit-label').textContent = getUnits() === 'metric' ? '°C' : '°';
@@ -268,6 +288,20 @@ function render(payload, fetchedAt, opts = {}) {
   $('#feels-like').textContent = feels != null ? `Feels like ${Math.round(feels)}° · ${info.text}` : info.text;
   $('#hero-updated').textContent = timeAgo(fetchedAt);
   $('#btn-unit-toggle').textContent = getUnits() === 'metric' ? '°C' : '°F';
+
+  const currentPrecip = current.precipitation;
+  const precipStatus = currentPrecipitationStatus(curCode, currentPrecip);
+  const nowCondition = $('#now-condition');
+  nowCondition.textContent = precipStatus.text;
+  nowCondition.classList.toggle('is-wet', precipStatus.wet);
+  $('#now-precipitation').textContent = currentPrecip == null ? 'Unavailable' : fmtCurrentPrecip(currentPrecip);
+  const currentHumidity = current.relative_humidity_2m ?? hourly.relative_humidity_2m?.[nowIdx];
+  $('#now-humidity').textContent = currentHumidity == null ? 'Unavailable' : `${Math.round(currentHumidity)}%`;
+  const currentWind = current.wind_speed_10m ?? hourly.wind_speed_10m?.[nowIdx];
+  const currentGust = current.wind_gusts_10m ?? hourly.wind_gusts_10m?.[nowIdx];
+  $('#now-wind').textContent = currentWind == null
+    ? 'Unavailable'
+    : `${Math.round(currentWind)} ${speedLabel()}${currentGust != null ? ` · gusts ${Math.round(currentGust)}` : ''}`;
 
   drawMinutely(payload.minutely_15);
 
@@ -392,7 +426,7 @@ function drawMinutely(minutely) {
     amounts.push(minutely.precipitation?.[start + i] ?? 0);
   }
   const maxP = Math.max(...probs);
-  $('#precip-summary-flag').textContent = maxP < 5 ? 'Dry' : `${maxP}% Chance`;
+  $('#precip-summary-flag').textContent = maxP < 5 ? 'Dry forecast' : `${maxP}% forecast chance`;
 
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || canvas.parentElement.clientWidth || 320, h = 64;
