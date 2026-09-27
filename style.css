@@ -291,6 +291,30 @@ a { color: var(--cyan); }
 }
 .btn.primary { background: var(--cyan); border-color: var(--cyan); color: #06202e; font-weight: 700; }
 .time-result { margin-top: 12px; font-size: 0.88rem; line-height: 1.5; }
+.time-result:empty { display: none; }
+.time-result.loading { color: var(--muted); }
+.time-result.error {
+  padding: 10px 12px;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 10px;
+}
+.time-result.loaded {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.time-result.loaded > span { color: var(--muted); }
+.history-values { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 4px 0; }
+.history-values span { color: var(--muted); }
+.history-values b { color: var(--text); font-weight: 600; }
+.btn:disabled { opacity: 0.6; cursor: wait; }
 
 @media (min-width: 600px) {
   .modal { align-items: center; padding: 20px; }

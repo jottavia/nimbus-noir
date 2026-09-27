@@ -102,7 +102,6 @@ function forecastURL(lat, lon) {
 function archiveURL(lat, lon, date) {
   const p = new URLSearchParams({
     latitude: String(lat), longitude: String(lon), start_date: date, end_date: date,
-    hourly: 'temperature_2m,precipitation,weather_code',
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum',
     ...unitParams(getUnits()),
     timezone: 'auto',
@@ -593,22 +592,52 @@ async function runSearch(q) {
 
 /* ================= Time Machine ================= */
 async function runTimeMachine() {
+  const input = $('#time-input');
+  const button = $('#time-go');
   const date = $('#time-input').value;
   const out = $('#time-result');
   if (!date) { out.textContent = 'Pick a date first.'; return; }
   if (state.lat == null) { out.textContent = 'Set a location first.'; return; }
+  if (input.max && date > input.max) { out.textContent = `Choose ${input.max} or earlier so the historical data is available.`; return; }
+
+  out.className = 'time-result loading';
   out.textContent = 'Loading archive…';
+  button.disabled = true;
+  button.textContent = 'Loading…';
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
-    const res = await fetch(archiveURL(state.lat, state.lon, date));
-    if (!res.ok) throw new Error(`Archive HTTP ${res.status}`);
-    const data = await res.json();
-    const hi = Math.round(data.daily.temperature_2m_max[0]);
-    const lo = Math.round(data.daily.temperature_2m_min[0]);
-    const pr = data.daily.precipitation_sum?.[0] ?? 0;
-    const desc = data.daily.weather_code?.[0] != null ? wmoInfo(data.daily.weather_code[0]).text : '—';
-    state.liveMode = false;
-    out.innerHTML = `<strong style="color:#fff">${escapeHtml(date)}</strong> @ ${escapeHtml(state.name)} — H: ${hi}${degLabel()} L: ${lo}${degLabel()}, precip ${escapeHtml(fmtPrecip(pr))}. ${escapeHtml(desc)}.<br><span class="small">Live forecast untouched; tap “Back to live”.</span>`;
-  } catch { out.textContent = 'Archive unavailable offline or for future dates.'; }
+    const res = await fetch(archiveURL(state.lat, state.lon, date), { signal: controller.signal });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.reason || `Archive request failed (${res.status}).`);
+
+    const daily = data?.daily;
+    const hiValue = daily?.temperature_2m_max?.[0];
+    const loValue = daily?.temperature_2m_min?.[0];
+    if (hiValue == null || loValue == null) throw new Error('No historical weather was returned for that date.');
+
+    const hi = Math.round(hiValue);
+    const lo = Math.round(loValue);
+    const pr = daily.precipitation_sum?.[0] ?? 0;
+    const desc = daily.weather_code?.[0] != null ? wmoInfo(daily.weather_code[0]).text : 'Conditions unavailable';
+    const displayDate = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    });
+
+    out.className = 'time-result loaded';
+    out.innerHTML = `<strong>${escapeHtml(displayDate)}</strong><span>${escapeHtml(state.name)}</span><div class="history-values"><span>High <b>${hi}${degLabel()}</b></span><span>Low <b>${lo}${degLabel()}</b></span><span>Precipitation <b>${escapeHtml(fmtPrecip(pr))}</b></span></div><span>${escapeHtml(desc)}</span>`;
+    out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (err) {
+    out.className = 'time-result error';
+    out.textContent = err?.name === 'AbortError'
+      ? 'History took too long to load. Check your connection and try again.'
+      : (err?.message || 'Historical weather is currently unavailable.');
+  } finally {
+    clearTimeout(timeout);
+    button.disabled = false;
+    button.textContent = 'View history';
+  }
 }
 
 /* ================= Radar (RainViewer, Gap 4, on-demand) ================= */
@@ -754,6 +783,7 @@ function wire() {
     openModal('time-modal');
     const input = $('#time-input');
     const max = new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10); // ERA5 latency ~5d
+    input.min = '1940-01-01';
     input.max = max;
     if (!input.value) input.value = max;
   });
@@ -809,7 +839,7 @@ function wire() {
   });
 
   $('#time-go').addEventListener('click', () => { buzz(); runTimeMachine(); });
-  $('#time-back').addEventListener('click', () => { closeModal('time-modal'); refresh(true); });
+  $('#time-back').addEventListener('click', () => { state.liveMode = true; closeModal('time-modal'); });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && state.lat != null && state.liveMode) {
