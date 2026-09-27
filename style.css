@@ -100,6 +100,33 @@ a { color: var(--cyan); }
 .icon-btn:disabled { opacity: 0.38; cursor: not-allowed; }
 .icon { width: 22px; height: 22px; }
 
+.pull-refresh {
+  position: fixed;
+  top: calc(52px + var(--safe-top));
+  left: 50%;
+  z-index: 19;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(22, 28, 36, 0.96);
+  color: var(--muted);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  font-size: 0.78rem;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -44px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.pull-refresh.visible { opacity: 1; }
+.pull-refresh.ready { color: var(--cyan); }
+.pull-refresh.ready .pull-refresh-icon { transform: rotate(180deg); }
+.pull-refresh.refreshing .pull-refresh-icon { animation: pull-refresh-spin 700ms linear infinite; }
+.pull-refresh-icon { display: inline-block; font-size: 1rem; transition: transform 120ms ease; }
+@keyframes pull-refresh-spin { to { transform: rotate(360deg); } }
+
 .pin-btn {
   background: transparent;
   border: 0;

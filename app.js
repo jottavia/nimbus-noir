@@ -39,8 +39,10 @@ function fmtCurrentPrecip(v) {
 /* ================= Cache (units are part of the key) ================= */
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const FOREGROUND_REVALIDATE_MS = 20 * 60 * 1000;
+const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const PIN_KEY = 'nimbus_pinned_locations';
 const LAST_LOC_KEY = 'nimbus_last_location';
+let lastAutoRefreshAttempt = 0;
 
 const state = {
   lat: null, lon: null, name: 'Locating...', payload: null, fetchedAt: 0,
@@ -200,12 +202,12 @@ function synthesizeSummary(hourly, startIdx) {
 function currentPrecipitationStatus(code, amount) {
   const c = Number(code);
   const hasAmount = Number(amount) > 0;
-  if (c === 95 || c === 96 || c === 99) return { text: 'Thunderstorms occurring', wet: true };
-  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return { text: 'Snow occurring', wet: true };
-  if (c >= 51 && c <= 55) return { text: 'Drizzle occurring', wet: true };
-  if ((c >= 61 && c <= 65) || (c >= 80 && c <= 82)) return { text: 'Rain occurring', wet: true };
-  if (hasAmount) return { text: 'Precipitation occurring', wet: true };
-  return { text: 'No precipitation detected', wet: false };
+  if (c === 95 || c === 96 || c === 99) return { text: 'Thunderstorms indicated nearby', wet: true };
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return { text: 'Snow indicated nearby', wet: true };
+  if (c >= 51 && c <= 55) return { text: 'Drizzle indicated nearby', wet: true };
+  if ((c >= 61 && c <= 65) || (c >= 80 && c <= 82)) return { text: 'Rain indicated nearby', wet: true };
+  if (hasAmount) return { text: 'Precipitation indicated nearby', wet: true };
+  return { text: 'No precipitation indicated', wet: false };
 }
 
 /* ================= Moon + solar (spec 2.3, pure client-side) ================= */
@@ -395,11 +397,7 @@ function render(payload, fetchedAt, opts = {}) {
   });
 
   $('#offline-badge').hidden = !opts.offline;
-  const badge = $('#cache-badge');
-  if (opts.fromCache && !opts.offline) {
-    badge.hidden = false;
-    badge.textContent = `Served instantly from on-device cache (${timeAgo(fetchedAt).toLowerCase()})`;
-  } else badge.hidden = true;
+  $('#cache-badge').hidden = true;
 
   updatePinUI();
 }
@@ -516,10 +514,24 @@ function setLocation(lat, lon, name, { save = true } = {}) {
 
 async function refresh(force = false) {
   if (state.lat == null) return;
+  const requestedLat = state.lat;
+  const requestedLon = state.lon;
+  if (force) lastAutoRefreshAttempt = Date.now();
   try {
-    const { payload, fetchedAt, offline, fromCache } = await loadForecast(state.lat, state.lon, { force });
-    render(payload, fetchedAt, { offline, fromCache });
-    loadAlerts(state.lat, state.lon);
+    const result = await loadForecast(requestedLat, requestedLon, { force });
+    if (state.lat !== requestedLat || state.lon !== requestedLon || !state.liveMode) return;
+    render(result.payload, result.fetchedAt, result);
+    loadAlerts(requestedLat, requestedLon);
+
+    // Paint a warm cache immediately, then silently replace it with a fresh
+    // network response so current conditions never remain cache-bound.
+    if (!force && result.fromCache && !result.offline) {
+      lastAutoRefreshAttempt = Date.now();
+      const fresh = await loadForecast(requestedLat, requestedLon, { force: true });
+      if (state.lat !== requestedLat || state.lon !== requestedLon || !state.liveMode) return;
+      render(fresh.payload, fresh.fetchedAt, fresh);
+      loadAlerts(requestedLat, requestedLon);
+    }
   } catch {
     $('#hero-prose').textContent = 'No network and no cached data. Connect once to cache this location.';
   }
@@ -1025,6 +1037,70 @@ async function shareSnapshot() {
   }
 }
 
+function wirePullToRefresh() {
+  const indicator = $('#pull-refresh');
+  const label = $('#pull-refresh-label');
+  const threshold = 68;
+  let startY = null;
+  let pullDistance = 0;
+  let refreshing = false;
+
+  const reset = (delay = 0) => {
+    setTimeout(() => {
+      indicator.classList.remove('visible', 'ready', 'refreshing');
+      indicator.style.transform = 'translate(-50%, -44px)';
+      indicator.setAttribute('aria-hidden', 'true');
+      label.textContent = 'Pull to refresh';
+      pullDistance = 0;
+    }, delay);
+  };
+
+  document.addEventListener('touchstart', (event) => {
+    if (refreshing || !state.liveMode || window.scrollY > 0 || event.touches.length !== 1) return;
+    if (event.target.closest('button, a, input, .hourly, .radar-map, .modal-card, .drawer')) return;
+    startY = event.touches[0].clientY;
+    pullDistance = 0;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (event) => {
+    if (startY == null || event.touches.length !== 1) return;
+    const delta = event.touches[0].clientY - startY;
+    if (delta <= 0 || window.scrollY > 0) return;
+    event.preventDefault();
+    pullDistance = Math.min(88, delta * 0.55);
+    indicator.classList.add('visible');
+    indicator.classList.toggle('ready', pullDistance >= threshold);
+    indicator.style.transform = `translate(-50%, ${Math.min(10, -44 + pullDistance)}px)`;
+    indicator.setAttribute('aria-hidden', 'false');
+    label.textContent = pullDistance >= threshold ? 'Release to refresh' : 'Pull to refresh';
+  }, { passive: false });
+
+  const finishPull = async () => {
+    if (startY == null) return;
+    startY = null;
+    if (pullDistance < threshold) {
+      reset();
+      return;
+    }
+    refreshing = true;
+    indicator.classList.remove('ready');
+    indicator.classList.add('visible', 'refreshing');
+    indicator.style.transform = 'translate(-50%, 10px)';
+    label.textContent = 'Refreshing…';
+    buzz();
+    await refresh(true);
+    label.textContent = 'Updated';
+    refreshing = false;
+    reset(650);
+  };
+
+  document.addEventListener('touchend', finishPull, { passive: true });
+  document.addEventListener('touchcancel', () => {
+    startY = null;
+    if (!refreshing) reset();
+  }, { passive: true });
+}
+
 /* ================= Wiring ================= */
 function wire() {
   $('#drawer-btn').addEventListener('click', () => { buzz(); openDrawer(); });
@@ -1077,6 +1153,7 @@ function wire() {
   $('#radar-zoom-in').addEventListener('click', () => zoomRadar(1));
   $('#radar-zoom-out').addEventListener('click', () => zoomRadar(-1));
   wireRadarPan();
+  wirePullToRefresh();
 
   $('#btn-share').addEventListener('click', shareSnapshot);
 
@@ -1121,7 +1198,12 @@ function wire() {
       if (Date.now() - state.fetchedAt > FOREGROUND_REVALIDATE_MS) refresh(true);
     }
   });
-  setInterval(() => { if (state.liveMode && state.fetchedAt) $('#hero-updated').textContent = timeAgo(state.fetchedAt); }, 60000);
+  setInterval(() => {
+    if (!state.liveMode || !state.fetchedAt) return;
+    $('#hero-updated').textContent = timeAgo(state.fetchedAt);
+    const newestAttempt = Math.max(state.fetchedAt, lastAutoRefreshAttempt);
+    if (document.visibilityState === 'visible' && Date.now() - newestAttempt >= AUTO_REFRESH_MS) refresh(true);
+  }, 60000);
   window.addEventListener('resize', () => { if (state.liveMode && state.payload) drawMinutely(state.payload.minutely_15); });
 }
 
