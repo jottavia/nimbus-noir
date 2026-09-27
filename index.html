@@ -98,6 +98,14 @@
   <div id="cache-badge" class="cache-badge" hidden></div>
 
   <main id="app">
+    <section id="history-banner" class="history-banner" hidden aria-live="polite">
+      <div>
+        <span class="history-kicker">Time Machine</span>
+        <strong id="history-date-label">Historical weather</strong>
+      </div>
+      <button id="history-exit" class="btn history-exit">Back to live</button>
+    </section>
+
     <!-- Severe Weather Banner (Expandable) -->
     <div class="alert-banner" id="severe-alert" hidden>
       <button class="alert-header" id="alert-toggle" aria-expanded="false">
@@ -131,7 +139,7 @@
     <!-- Signature Dark Sky Sub-Hourly Precipitation Bar -->
     <section class="precip-card card" aria-label="Precipitation next hour">
       <div class="card-title">
-        <span>Next-Hour Precipitation</span>
+        <span id="precip-card-title">Next-Hour Precipitation</span>
         <span class="mono" id="precip-summary-flag">—</span>
       </div>
       <div class="canvas-container">
@@ -140,7 +148,7 @@
       <div class="precip-labels">
         <span>Now</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span>
       </div>
-      <h2 class="card-title" style="margin-top:12px">24-Hour Outlook <span id="precip-window" class="dim"></span></h2>
+      <h2 id="precip-outlook-title" class="card-title" style="margin-top:12px">24-Hour Outlook <span id="precip-window" class="dim"></span></h2>
       <div id="precip-bar" class="precip-bar" role="img" aria-label="24 hour precipitation probability bar"></div>
       <div id="precip-label" class="precip-label dim">—</div>
     </section>
@@ -166,12 +174,12 @@
     </section>
 
     <section class="card" aria-label="Hourly forecast">
-      <h2 class="card-title">Hourly</h2>
+      <h2 id="hourly-card-title" class="card-title">Hourly</h2>
       <div id="hourly-carousel" class="hourly hourly-carousel" tabindex="0"></div>
     </section>
 
     <section class="daily-card card" aria-label="10 day forecast">
-      <h2 class="card-title">10-Day Forecast</h2>
+      <h2 id="daily-card-title" class="card-title">10-Day Forecast</h2>
       <ul id="daily-list" class="daily"></ul>
     </section>
 
@@ -228,7 +236,7 @@
       <input id="time-input" type="date" max="">
       <div class="row">
         <button id="time-go" class="btn primary">View history</button>
-        <button id="time-back" class="btn">Back to live</button>
+        <button id="time-back" class="btn">Cancel</button>
       </div>
       <div id="time-result" class="time-result" role="status" aria-live="polite"></div>
     </div>

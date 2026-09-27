@@ -36,7 +36,10 @@ const FOREGROUND_REVALIDATE_MS = 20 * 60 * 1000;
 const PIN_KEY = 'nimbus_pinned_locations';
 const LAST_LOC_KEY = 'nimbus_last_location';
 
-const state = { lat: null, lon: null, name: 'Locating...', payload: null, fetchedAt: 0, liveMode: true };
+const state = {
+  lat: null, lon: null, name: 'Locating...', payload: null, fetchedAt: 0,
+  liveMode: true, livePayload: null, liveFetchedAt: 0, historyDate: null
+};
 
 function cacheKey(lat, lon) {
   return `nimbus_forecast_${Number(lat).toFixed(3)}_${Number(lon).toFixed(3)}_${getUnits()}`;
@@ -102,7 +105,8 @@ function forecastURL(lat, lon) {
 function archiveURL(lat, lon, date) {
   const p = new URLSearchParams({
     latitude: String(lat), longitude: String(lon), start_date: date, end_date: date,
-    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum',
+    hourly: 'temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,uv_index,surface_pressure',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset,uv_index_max,wind_gusts_10m_max',
     ...unitParams(getUnits()),
     timezone: 'auto',
   });
@@ -226,9 +230,26 @@ function pressureTrend(hourly, idx) {
 /* ================= Render ================= */
 function setIcon(useEl, iconId) { useEl.setAttribute('href', `#${iconId}`); }
 
+function setLiveInterface() {
+  document.body.classList.remove('history-mode');
+  $('#history-banner').hidden = true;
+  $('#precip-card-title').textContent = 'Next-Hour Precipitation';
+  $('#precip-outlook-title').childNodes[0].nodeValue = '24-Hour Outlook ';
+  $('#precip-window').textContent = '';
+  $('#hourly-card-title').textContent = 'Hourly';
+  $('#daily-card-title').textContent = '10-Day Forecast';
+  $('#btn-radar').disabled = false;
+  $('#btn-radar').title = 'RainViewer Radar';
+}
+
 function render(payload, fetchedAt, opts = {}) {
+  state.liveMode = true;
+  state.historyDate = null;
   state.payload = payload;
   state.fetchedAt = fetchedAt;
+  state.livePayload = payload;
+  state.liveFetchedAt = fetchedAt;
+  setLiveInterface();
   const { hourly, daily } = payload;
   const nowIdx = hourIndex(hourly.time);
 
@@ -591,6 +612,152 @@ async function runSearch(q) {
 }
 
 /* ================= Time Machine ================= */
+function historicalSummary(hourly, daily) {
+  const counts = {};
+  (hourly.weather_code || []).forEach((code) => {
+    const text = wmoInfo(code).text;
+    counts[text] = (counts[text] || 0) + 1;
+  });
+  const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Recorded conditions';
+  const total = daily.precipitation_sum?.[0] ?? 0;
+  const precip = Number(total) > 0
+    ? ` Recorded precipitation totaled ${fmtPrecip(total)}.`
+    : ' No measurable precipitation was recorded.';
+  return `${dominant} through much of the day.${precip}`;
+}
+
+function renderHistorical(payload, date) {
+  const { hourly, daily } = payload;
+  if (!hourly?.time?.length || !daily?.time?.length) throw new Error('The historical day record was incomplete.');
+
+  state.liveMode = false;
+  state.historyDate = date;
+  state.payload = payload;
+  document.body.classList.add('history-mode');
+
+  const displayDate = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  });
+  $('#history-date-label').textContent = displayDate;
+  $('#history-banner').hidden = false;
+  $('#severe-alert').hidden = true;
+  $('#offline-badge').hidden = true;
+  $('#cache-badge').hidden = true;
+  $('#btn-radar').disabled = true;
+  $('#btn-radar').title = 'Radar is only available for current weather';
+
+  const noonIdx = Math.max(0, hourly.time.findIndex((t) => t.includes('T12:')));
+  const high = Math.round(daily.temperature_2m_max[0]);
+  const low = Math.round(daily.temperature_2m_min[0]);
+  const code = daily.weather_code?.[0] ?? hourly.weather_code[noonIdx];
+  const info = wmoInfo(code, true);
+  const feels = hourly.apparent_temperature?.[noonIdx];
+
+  $('#hero-temp').textContent = `${high}`;
+  $('#hero-unit-label').textContent = getUnits() === 'metric' ? '°C' : '°';
+  $('#hero-high').textContent = `H: ${high}°`;
+  $('#hero-low').textContent = `L: ${low}°`;
+  setIcon($('#hero-icon-use'), info.icon);
+  $('#hero-icon').style.color = code === 0 ? '#f59e0b' : code >= 95 ? '#c084fc' : '#fff';
+  $('#hero-prose').textContent = historicalSummary(hourly, daily);
+  $('#hero-updated').textContent = displayDate;
+  $('#feels-like').textContent = feels != null ? `Midday felt like ${Math.round(feels)}° · ${info.text}` : info.text;
+  $('#btn-unit-toggle').textContent = getUnits() === 'metric' ? '°C' : '°F';
+
+  // Historical mode replaces the next-hour view with the complete day's record.
+  drawMinutely(null);
+  $('#precip-card-title').textContent = 'Historical Precipitation';
+  $('#precip-outlook-title').childNodes[0].nodeValue = 'Hourly Record ';
+  $('#precip-window').textContent = displayDate;
+  const amounts = hourly.precipitation || [];
+  const maxAmount = Math.max(0.001, ...amounts.map((v) => Number(v) || 0));
+  const bar = $('#precip-bar');
+  bar.innerHTML = '';
+  hourly.time.forEach((time, i) => {
+    const amount = Number(amounts[i]) || 0;
+    const ratio = amount / maxAmount;
+    const seg = document.createElement('div');
+    seg.className = `precip-seg ${amount <= 0 ? 'dry' : ratio < 0.34 ? 'light' : ratio < 0.67 ? 'medium' : 'heavy'}`;
+    seg.style.height = `${12 + Math.round(ratio * 32)}px`;
+    seg.title = `${fmtHour(time)}: ${fmtPrecip(amount)}`;
+    bar.appendChild(seg);
+  });
+  const totalPrecip = daily.precipitation_sum?.[0] ?? amounts.reduce((sum, v) => sum + (Number(v) || 0), 0);
+  $('#precip-summary-flag').textContent = fmtPrecip(totalPrecip);
+  $('#precip-label').textContent = Number(totalPrecip) > 0
+    ? `${fmtPrecip(totalPrecip)} recorded across the day.`
+    : 'No measurable precipitation was recorded.';
+
+  const trend = pressureTrend(hourly, noonIdx);
+  const pressure = hourly.surface_pressure?.[noonIdx];
+  $('#val-pressure').textContent = pressure != null ? `${Math.round(pressure)} hPa` : '--';
+  $('#val-pressure-trend').textContent = trend?.arrow || '--';
+  $('#val-pressure-prose').textContent = trend ? `${trend.prose} around midday` : 'Historical pressure unavailable';
+
+  const moon = moonPhase(new Date(`${date}T12:00:00`).getTime());
+  $('#val-moon-icon').textContent = moon.icon;
+  $('#val-moon-name').textContent = moon.name;
+  const sunrise = daily.sunrise?.[0] ? fmtHour(daily.sunrise[0]) : '—';
+  const sunset = daily.sunset?.[0] ? fmtHour(daily.sunset[0]) : '—';
+  $('#val-solar-countdown').textContent = `Sunrise ${sunrise} · Sunset ${sunset}`;
+
+  $('#hourly-card-title').textContent = 'Hourly History';
+  const sunriseHour = Number(daily.sunrise?.[0]?.slice(11, 13) ?? 7);
+  const sunsetHour = Number(daily.sunset?.[0]?.slice(11, 13) ?? 19);
+  const hw = $('#hourly-carousel');
+  hw.innerHTML = '';
+  hourly.time.forEach((time, i) => {
+    const hour = Number(time.slice(11, 13));
+    const amount = Number(amounts[i]) || 0;
+    const hourInfo = wmoInfo(hourly.weather_code[i], hour >= sunriseHour && hour < sunsetHour);
+    const col = document.createElement('div');
+    col.className = 'hour-col' + (hour === 12 ? ' now' : '');
+    col.innerHTML = `<div class="h">${fmtHour(time)}</div>` +
+      `<svg class="icon" aria-hidden="true"><use href="#${hourInfo.icon}"/></svg>` +
+      `<div class="r${amount > 0 ? ' wet' : ''}">${amount > 0 ? escapeHtml(fmtPrecip(amount)) : ''}</div>` +
+      `<div class="t">${Math.round(hourly.temperature_2m[i])}°</div>`;
+    hw.appendChild(col);
+  });
+  hw.scrollLeft = 0;
+
+  const finite = (values) => (values || []).filter((v) => v != null).map(Number).filter(Number.isFinite);
+  const avg = (values) => values.length ? values.reduce((a, b) => a + b, 0) / values.length : NaN;
+  const humidity = avg(finite(hourly.relative_humidity_2m));
+  const winds = finite(hourly.wind_speed_10m);
+  const gusts = finite(hourly.wind_gusts_10m);
+  const maxWind = winds.length ? Math.max(...winds) : NaN;
+  const maxGust = gusts.length ? Math.max(...gusts) : NaN;
+  const uvValues = finite(hourly.uv_index);
+  const maxUv = uvValues.length ? Math.max(...uvValues) : NaN;
+  $('#daily-card-title').textContent = 'Day Details';
+  $('#daily-list').innerHTML = `<li class="history-detail-grid">` +
+    `<div class="history-detail"><span>High</span><strong>${high}${degLabel()}</strong></div>` +
+    `<div class="history-detail"><span>Low</span><strong>${low}${degLabel()}</strong></div>` +
+    `<div class="history-detail"><span>Humidity</span><strong>${Number.isFinite(humidity) ? Math.round(humidity) + '%' : '—'}</strong></div>` +
+    `<div class="history-detail"><span>Wind</span><strong>${Number.isFinite(maxWind) ? Math.round(maxWind) + ' ' + speedLabel() : '—'}</strong></div>` +
+    `<div class="history-detail"><span>Wind gust</span><strong>${Number.isFinite(maxGust) ? Math.round(maxGust) + ' ' + speedLabel() : '—'}</strong></div>` +
+    `<div class="history-detail"><span>UV index</span><strong>${Number.isFinite(maxUv) ? maxUv.toFixed(1) : '—'}</strong></div>` +
+    `<div class="history-detail"><span>Sunrise</span><strong>${sunrise}</strong></div>` +
+    `<div class="history-detail"><span>Sunset</span><strong>${sunset}</strong></div>` +
+    `</li>`;
+
+  closeModal('time-modal');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function returnToLive() {
+  state.liveMode = true;
+  state.historyDate = null;
+  if (state.livePayload) {
+    render(state.livePayload, state.liveFetchedAt);
+    loadAlerts(state.lat, state.lon);
+    if (Date.now() - state.liveFetchedAt > CACHE_TTL_MS) refresh(true);
+  } else {
+    refresh(true);
+  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 async function runTimeMachine() {
   const input = $('#time-input');
   const button = $('#time-go');
@@ -617,22 +784,16 @@ async function runTimeMachine() {
     const loValue = daily?.temperature_2m_min?.[0];
     if (hiValue == null || loValue == null) throw new Error('No historical weather was returned for that date.');
 
-    const hi = Math.round(hiValue);
-    const lo = Math.round(loValue);
-    const pr = daily.precipitation_sum?.[0] ?? 0;
-    const desc = daily.weather_code?.[0] != null ? wmoInfo(daily.weather_code[0]).text : 'Conditions unavailable';
-    const displayDate = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-    });
-
-    out.className = 'time-result loaded';
-    out.innerHTML = `<strong>${escapeHtml(displayDate)}</strong><span>${escapeHtml(state.name)}</span><div class="history-values"><span>High <b>${hi}${degLabel()}</b></span><span>Low <b>${lo}${degLabel()}</b></span><span>Precipitation <b>${escapeHtml(fmtPrecip(pr))}</b></span></div><span>${escapeHtml(desc)}</span>`;
-    out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    renderHistorical(data, date);
+    out.className = 'time-result';
+    out.textContent = '';
+    return true;
   } catch (err) {
     out.className = 'time-result error';
     out.textContent = err?.name === 'AbortError'
       ? 'History took too long to load. Check your connection and try again.'
       : (err?.message || 'Historical weather is currently unavailable.');
+    return false;
   } finally {
     clearTimeout(timeout);
     button.disabled = false;
@@ -811,7 +972,10 @@ async function shareSnapshot() {
   buzz();
   const temp = $('#hero-temp').textContent;
   const prose = $('#hero-prose').textContent;
-  const text = `${state.name}: ${temp}${getUnits() === 'metric' ? '°C' : '°'} — ${prose} (via Nimbus Noir)`;
+  const datePrefix = state.historyDate
+    ? `${new Date(`${state.historyDate}T12:00:00`).toLocaleDateString()}: `
+    : '';
+  const text = `${datePrefix}${state.name}: ${temp}${getUnits() === 'metric' ? '°C' : '°'} — ${prose} (via Nimbus Noir)`;
   if (isNativeApp && nativePlugins?.Share) {
     try { await nativePlugins.Share.share({ title: 'Nimbus Noir', text, dialogTitle: 'Share weather snapshot' }); } catch { /* dismissed */ }
   } else if (navigator.share) {
@@ -853,9 +1017,21 @@ function wire() {
 
   $('#btn-unit-toggle').addEventListener('click', async () => {
     buzz();
+    const previousUnits = getUnits();
+    const historyDate = state.historyDate;
     setUnits(getUnits() === 'metric' ? 'imperial' : 'metric');
     $('#btn-unit-toggle').textContent = getUnits() === 'metric' ? '°C' : '°F';
-    await refresh(true); // new units = new cache key = refetch
+    if (historyDate) {
+      $('#time-input').value = historyDate;
+      const loaded = await runTimeMachine();
+      if (!loaded) {
+        setUnits(previousUnits);
+        $('#btn-unit-toggle').textContent = previousUnits === 'metric' ? '°C' : '°F';
+        openModal('time-modal');
+      }
+    } else {
+      await refresh(true); // new units = new cache key = refetch
+    }
   });
 
   $('#btn-radar').addEventListener('click', openRadar);
@@ -903,15 +1079,16 @@ function wire() {
   });
 
   $('#time-go').addEventListener('click', () => { buzz(); runTimeMachine(); });
-  $('#time-back').addEventListener('click', () => { state.liveMode = true; closeModal('time-modal'); });
+  $('#time-back').addEventListener('click', () => closeModal('time-modal'));
+  $('#history-exit').addEventListener('click', () => { buzz(); returnToLive(); });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && state.lat != null && state.liveMode) {
       if (Date.now() - state.fetchedAt > FOREGROUND_REVALIDATE_MS) refresh(true);
     }
   });
-  setInterval(() => { if (state.fetchedAt) $('#hero-updated').textContent = timeAgo(state.fetchedAt); }, 60000);
-  window.addEventListener('resize', () => { if (state.payload) drawMinutely(state.payload.minutely_15); });
+  setInterval(() => { if (state.liveMode && state.fetchedAt) $('#hero-updated').textContent = timeAgo(state.fetchedAt); }, 60000);
+  window.addEventListener('resize', () => { if (state.liveMode && state.payload) drawMinutely(state.payload.minutely_15); });
 }
 
 function registerSW() {
