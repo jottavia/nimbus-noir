@@ -249,14 +249,16 @@ function countRadarPixels(image, pixelX, pixelY, radius) {
   context.drawImage(image, 0, 0);
   const left = Math.max(0, pixelX - radius);
   const top = Math.max(0, pixelY - radius);
-  const width = Math.min(image.width - left, radius * 2 + 1);
-  const height = Math.min(image.height - top, radius * 2 + 1);
+  const width = Math.min(image.width - 1, pixelX + radius) - left + 1;
+  const height = Math.min(image.height - 1, pixelY + radius) - top + 1;
   const pixels = context.getImageData(left, top, width, height).data;
   let wetPixels = 0;
   for (let i = 3; i < pixels.length; i += 4) {
     // RainViewer's radar overlay is transparent where no echo is present.
     // Requiring visible opacity ignores faint antialiasing at echo edges.
-    if (pixels[i] >= 40) wetPixels += 1;
+    // Unsmoothed Universal Blue, snow colors disabled: echoes >=15 dBZ
+    // are opaque. Weaker echoes are not sufficient evidence of rain.
+    if (pixels[i] === 255) wetPixels += 1;
   }
   return wetPixels;
 }
@@ -279,7 +281,7 @@ async function fetchLocalRadarObservation(lat, lon) {
   const z = 7;
   const position = radarTilePosition(lat, lon, z);
   // Disable smoothing for sampling so colored halos do not create false rain.
-  const tileUrl = `https://tilecache.rainviewer.com${frame.path}/256/${z}/${position.x}/${position.y}/2/0_1.png`;
+  const tileUrl = `https://tilecache.rainviewer.com${frame.path}/256/${z}/${position.x}/${position.y}/2/0_0.png`;
   const tileResponse = await fetch(tileUrl, { cache: 'no-store' });
   if (!tileResponse.ok) throw new Error('Radar tile is unavailable');
   const image = await decodeRadarTile(await tileResponse.blob());
@@ -306,15 +308,15 @@ async function updateRightNowWithRadar(current, checkId, lat, lon) {
     const model = currentPrecipitationStatus(current.weather_code, current.precipitation);
     const condition = $('#now-condition');
     if (observation.local && model.wet) {
-      condition.textContent = 'Precipitation likely at your location';
+      condition.textContent = 'Radar echoes nearby; precipitation possible';
     } else if (observation.local) {
-      condition.textContent = 'Radar detects precipitation at your location';
+      condition.textContent = 'Radar echoes near this location';
     } else if (observation.nearby) {
-      condition.textContent = 'Radar detects precipitation nearby';
+      condition.textContent = 'Radar echoes in the surrounding area';
     } else if (model.wet) {
-      condition.textContent = 'Model suggests precipitation, but local radar is clear';
+      condition.textContent = 'Precipitation possible; radar does not confirm it';
     } else {
-      condition.textContent = 'No precipitation detected nearby';
+      condition.textContent = 'No strong radar echoes nearby';
     }
     condition.classList.toggle('is-wet', observation.local || observation.nearby);
     $('#now-source').textContent = `Radar ${timeAgo(observation.observedAt).replace('Updated ', '').toLowerCase()}`;
@@ -422,7 +424,7 @@ function render(payload, fetchedAt, opts = {}) {
     ? 'Unavailable'
     : `${Math.round(currentWind)} ${speedLabel()}${currentGust != null ? ` · gusts ${Math.round(currentGust)}` : ''}`;
 
-  drawMinutely(payload.minutely_15);
+  drawMinutely(payload.minutely_15, payload);
 
   // 24h hourly precip bar
   const bar = $('#precip-bar');
@@ -520,28 +522,48 @@ function render(payload, fetchedAt, opts = {}) {
 }
 
 /* ---- Gap 1: sub-hourly canvas (first 8 minutely_15 points = 2h) ---- */
-function drawMinutely(minutely) {
+function forecastEpoch(time, offset = 0) {
+  return Date.parse(`${time}Z`) - offset * 1000;
+}
+
+function shortRangePoints(payload, now = Date.now()) {
+  const offset = payload.utc_offset_seconds || 0;
+  const valid = (v) => typeof v === 'number' && Number.isFinite(v);
+  for (const [source, minutes] of [[payload.minutely_15, 15], [payload.hourly, 60]]) {
+    if (!source?.time) continue;
+    const points = source.time.map((time, i) => ({
+      time: forecastEpoch(time, offset),
+      probability: source.precipitation_probability?.[i],
+      amount: source.precipitation?.[i],
+    })).filter((p) => p.time > now && p.time <= now + 2 * 3600000);
+    if (points.length === 120 / minutes && points.every((p) => valid(p.probability) || valid(p.amount))) {
+      return { points, minutes };
+    }
+  }
+  return { points: [], minutes: 15 };
+}
+
+function drawMinutely(minutely, payload = {}) {
   const canvas = $('#precip-timeline');
   const labels = canvas.closest('.precip-card').querySelector('.precip-labels');
-  if (!minutely || !minutely.time || !minutely.time.length) {
+  const { points, minutes } = shortRangePoints({ ...payload, minutely_15: minutely });
+  if (!points.length) {
     canvas.closest('.canvas-container').style.display = 'none';
     labels.style.display = 'none';
-    $('#precip-summary-flag').textContent = '—';
+    $('#precip-summary-flag').textContent = 'Forecast temporarily unavailable';
     return;
   }
   canvas.closest('.canvas-container').style.display = '';
   labels.style.display = '';
-  const now = Date.now();
-  let start = 0;
-  while (start < minutely.time.length - 1 && new Date(minutely.time[start]).getTime() < now - 15 * 6e4) start++;
-  const N = Math.min(8, minutely.time.length - start);
-  const probs = [], amounts = [];
-  for (let i = 0; i < N; i++) {
-    probs.push(minutely.precipitation_probability?.[start + i] ?? 0);
-    amounts.push(minutely.precipitation?.[start + i] ?? 0);
-  }
+  const N = points.length;
+  const hasProbabilities = points.every((p) => Number.isFinite(p.probability));
+  const amounts = points.map((p) => Number.isFinite(p.amount) ? p.amount : 0);
+  const maxAmount = Math.max(...amounts);
+  const probs = points.map((p) => hasProbabilities ? p.probability : (maxAmount > 0 ? (p.amount || 0) / maxAmount * 100 : 0));
   const maxP = Math.max(...probs);
-  $('#precip-summary-flag').textContent = maxP < 5 ? 'Dry forecast' : `${maxP}% forecast chance`;
+  $('#precip-summary-flag').textContent = (hasProbabilities
+    ? `${Math.round(maxP)}% forecast chance`
+    : `${fmtPrecip(amounts.reduce((a, b) => a + b, 0))} forecast total`) + (minutes === 60 ? ' · hourly estimate' : '');
 
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || canvas.parentElement.clientWidth || 320, h = 64;
@@ -568,7 +590,7 @@ function drawMinutely(minutely) {
   // Dynamic axis labels matching the N×15m window
   labels.innerHTML = '';
   for (let k = 0; k <= 4; k++) {
-    const mins = Math.round((k * N * 15) / 4);
+    const mins = Math.round((k * N * minutes) / 4);
     const s = document.createElement('span');
     s.textContent = mins === 0 ? 'Now' : mins % 60 === 0 ? `${mins / 60}h` : `${mins}m`;
     labels.appendChild(s);
@@ -634,6 +656,7 @@ async function refresh(force = false) {
   const requestedLat = state.lat;
   const requestedLon = state.lon;
   if (force) lastAutoRefreshAttempt = Date.now();
+  if (force) radarObservationCache.clear();
   try {
     const result = await loadForecast(requestedLat, requestedLon, { force });
     if (state.lat !== requestedLat || state.lon !== requestedLon || !state.liveMode) return;
@@ -1321,7 +1344,7 @@ function wire() {
     const newestAttempt = Math.max(state.fetchedAt, lastAutoRefreshAttempt);
     if (document.visibilityState === 'visible' && Date.now() - newestAttempt >= AUTO_REFRESH_MS) refresh(true);
   }, 60000);
-  window.addEventListener('resize', () => { if (state.liveMode && state.payload) drawMinutely(state.payload.minutely_15); });
+  window.addEventListener('resize', () => { if (state.liveMode && state.payload) drawMinutely(state.payload.minutely_15, state.payload); });
 }
 
 function registerSW() {
