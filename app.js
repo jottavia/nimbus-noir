@@ -46,6 +46,105 @@ const LAST_LOC_KEY = 'nimbus_last_location';
 let lastAutoRefreshAttempt = 0;
 let rightNowCheckId = 0;
 const radarObservationCache = new Map();
+const stationCache = new Map();
+const observationCache = new Map();
+
+function stationDistance(lat, lon, coordinates) {
+  const [lng, latitude] = coordinates || [];
+  if (![lat, lon, lng, latitude].every(Number.isFinite)) return Infinity;
+  const radians = (v) => v * Math.PI / 180;
+  const a = Math.sin(radians(latitude - lat) / 2) ** 2
+    + Math.cos(radians(lat)) * Math.cos(radians(latitude)) * Math.sin(radians(lng - lon) / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(Math.min(1, a)));
+}
+
+async function nwsJSON(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/geo+json' } });
+    if (!response.ok) throw new Error('Station service unavailable');
+    return await response.json();
+  } finally { clearTimeout(timeout); }
+}
+
+function observationValue(quantity, kind) {
+  if (!Number.isFinite(quantity?.value)) return null;
+  const unit = quantity.unitCode?.split(':').pop();
+  const value = quantity.value;
+  if (kind === 'temperature') {
+    if (unit === 'degC') return value;
+    if (unit === 'degF') return (value - 32) * 5 / 9;
+  }
+  if (kind === 'wind') {
+    if (unit === 'km_h-1') return value;
+    if (unit === 'm_s-1') return value * 3.6;
+    if (unit === 'kn') return value * 1.852;
+  }
+  if (kind === 'humidity' && unit === 'percent') return value;
+  return null;
+}
+
+async function nearbyObservation(lat, lon) {
+  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  let stations = stationCache.get(key);
+  if (!stations || Date.now() - stations.at > 86400000) {
+    const point = await nwsJSON(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
+    const url = point.properties?.observationStations;
+    if (!url?.startsWith('https://api.weather.gov/')) throw new Error('No stations');
+    const collection = await nwsJSON(url);
+    const list = (collection.features || []).map((feature) => ({
+      id: feature.properties?.stationIdentifier,
+      name: feature.properties?.name || 'Nearby station',
+      distance: stationDistance(lat, lon, feature.geometry?.coordinates),
+    })).filter((s) => /^[A-Z0-9]+$/.test(s.id) && s.distance <= 50)
+      .sort((a, b) => a.distance - b.distance).slice(0, 3);
+    stations = { at: Date.now(), list };
+    stationCache.set(key, stations);
+  }
+  const reports = await Promise.all(stations.list.map(async (station) => {
+    try {
+      let cached = observationCache.get(station.id);
+      if (!cached || Date.now() - cached.at > 5 * 60000) {
+        const data = await nwsJSON(`https://api.weather.gov/stations/${station.id}/observations/latest`);
+        cached = { at: Date.now(), report: data.properties };
+        observationCache.set(station.id, cached);
+      }
+      const report = cached.report;
+      const at = Date.parse(report?.timestamp);
+      const age = Date.now() - at;
+      if (!Number.isFinite(at) || age < -5 * 60000 || age > 75 * 60000) return null;
+      if (observationValue(report.temperature, 'temperature') == null || !report.textDescription?.trim()) return null;
+      return { ...station, report, at, score: station.distance + age / 60000 * 0.3 };
+    } catch { return null; }
+  }));
+  return reports.filter(Boolean).sort((a, b) => a.score - b.score)[0] || null;
+}
+
+async function updateRightNow(current, checkId, lat, lon) {
+  const valid = () => checkId === rightNowCheckId && state.liveMode && state.lat === lat && state.lon === lon;
+  let observation;
+  try { observation = await nearbyObservation(lat, lon); } catch { /* model/radar fallback */ }
+  if (!valid()) return;
+  if (!observation) {
+    $('#now-station').textContent = 'Forecast estimate · no recent nearby station report';
+    await updateRightNowWithRadar(current, checkId, lat, lon);
+    return;
+  }
+  const { report, distance, name, at } = observation;
+  const metric = getUnits() === 'metric';
+  const temperature = observationValue(report.temperature, 'temperature');
+  const humidity = observationValue(report.relativeHumidity, 'humidity');
+  const wind = observationValue(report.windSpeed, 'wind');
+  const gust = observationValue(report.windGust, 'wind');
+  $('#now-temperature').textContent = `${Math.round(metric ? temperature : temperature * 9 / 5 + 32)}${degLabel()}`;
+  $('#now-humidity').textContent = humidity == null ? 'Not reported' : `${Math.round(humidity)}%`;
+  $('#now-wind').textContent = wind == null ? 'Not reported' : `${Math.round(metric ? wind : wind / 1.609344)} ${speedLabel()}${gust == null ? '' : ` · gusts ${Math.round(metric ? gust : gust / 1.609344)}`}`;
+  $('#now-condition').textContent = `${report.textDescription} reported nearby`;
+  $('#now-condition').classList.remove('is-wet');
+  $('#now-source').textContent = 'NWS observation';
+  $('#now-station').textContent = `${name} · ${Math.round(metric ? distance : distance / 1.609344)} ${metric ? 'km' : 'mi'} away · Observed ${Math.max(0, Math.round((Date.now() - at) / 60000))}m ago`;
+}
 
 const state = {
   lat: null, lon: null, name: 'Locating...', payload: null, fetchedAt: 0,
@@ -412,9 +511,11 @@ function render(payload, fetchedAt, opts = {}) {
   const nowCondition = $('#now-condition');
   nowCondition.textContent = precipStatus.text;
   nowCondition.classList.toggle('is-wet', precipStatus.wet);
-  $('#now-source').textContent = 'Checking local radar…';
+  $('#now-source').textContent = 'Checking nearby stations…';
+  $('#now-station').textContent = 'Showing forecast estimate while observations load';
+  $('#now-temperature').textContent = `${curTemp}${degLabel()}`;
   const checkId = ++rightNowCheckId;
-  updateRightNowWithRadar(current, checkId, state.lat, state.lon);
+  updateRightNow(current, checkId, state.lat, state.lon);
   $('#now-precipitation').textContent = currentPrecip == null ? 'Unavailable' : fmtCurrentPrecip(currentPrecip);
   const currentHumidity = current.relative_humidity_2m ?? hourly.relative_humidity_2m?.[nowIdx];
   $('#now-humidity').textContent = currentHumidity == null ? 'Unavailable' : `${Math.round(currentHumidity)}%`;
@@ -657,6 +758,7 @@ async function refresh(force = false) {
   const requestedLon = state.lon;
   if (force) lastAutoRefreshAttempt = Date.now();
   if (force) radarObservationCache.clear();
+  if (force) observationCache.clear();
   try {
     const result = await loadForecast(requestedLat, requestedLon, { force });
     if (state.lat !== requestedLat || state.lon !== requestedLon || !state.liveMode) return;
